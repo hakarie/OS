@@ -1,0 +1,454 @@
+1.
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <semaphore.h>
+
+#define MAX_CHAIRS 3
+#define NUM_STUDENTS 10
+
+pthread_mutex_t mutex;
+sem_t ta_sem;
+
+int waiting_students = 0;
+
+void *ta(void *arg) {
+    while (1) {
+        sem_wait(&ta_sem);  // Wait until a student wakes the TA
+
+        pthread_mutex_lock(&mutex);
+        if (waiting_students > 0) {
+            printf("TA: Helping a student. Waiting students: %d\n", waiting_students - 1);
+            waiting_students--;
+        } else {
+            printf("TA: No students. Going back to sleep.\n");
+        }
+        pthread_mutex_unlock(&mutex);
+
+        // Simulate helping a student
+        sleep(1);
+    }
+    return NULL;
+}
+
+void *student(void *id) {
+    int student_id = *(int *)id;
+    free(id);
+
+    pthread_mutex_lock(&mutex);
+
+    if (waiting_students < MAX_CHAIRS) {
+        waiting_students++;
+        printf("Student %d: Waiting. Total waiting students: %d\n", student_id, waiting_students);
+        pthread_mutex_unlock(&mutex);
+
+        // Wake up the TA if needed
+        sem_post(&ta_sem);
+    } else {
+        printf("Student %d: No chairs available. Will return later.\n", student_id);
+        pthread_mutex_unlock(&mutex);
+    }
+
+    return NULL;
+}
+
+int main() {
+    pthread_t ta_thread, students[NUM_STUDENTS];
+
+    pthread_mutex_init(&mutex, NULL);
+    sem_init(&ta_sem, 0, 0);
+
+    // Create TA thread
+    pthread_create(&ta_thread, NULL, ta, NULL);
+
+    // Create student threads
+    for (int i = 0; i < NUM_STUDENTS; i++) {
+        int *id = malloc(sizeof(int));
+        *id = i + 1;
+        pthread_create(&students[i], NULL, student, id);
+        sleep(rand() % 2);  // Random delay for student arrival
+    }
+
+    // Join student threads
+    for (int i = 0; i < NUM_STUDENTS; i++) {
+        pthread_join(students[i], NULL);
+    }
+
+    // Cleanup
+    pthread_cancel(ta_thread);
+    pthread_mutex_destroy(&mutex);
+    sem_destroy(&ta_sem);
+
+    return 0;
+}
+
+
+
+2.
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <semaphore.h>
+
+#define NUM_PHILOSOPHERS 5
+#define MAX_EATING_CYCLES 3  
+
+pthread_mutex_t chopstick[NUM_PHILOSOPHERS];
+sem_t room;
+
+void *philosopher(void *id) {
+    int phil_id = *(int *)id;
+    free(id);
+
+    for (int i = 0; i < MAX_EATING_CYCLES; i++) {
+        printf("Philosopher %d is thinking.\n", phil_id);
+        sleep(rand() % 3 + 1);
+
+        sem_wait(&room);
+
+        pthread_mutex_lock(&chopstick[phil_id]);
+        pthread_mutex_lock(&chopstick[(phil_id + 1) % NUM_PHILOSOPHERS]);
+
+        printf("Philosopher %d is eating. (Cycle %d/%d)\n", phil_id, i + 1, MAX_EATING_CYCLES);
+        sleep(rand() % 2 + 1);
+
+        pthread_mutex_unlock(&chopstick[phil_id]);
+        pthread_mutex_unlock(&chopstick[(phil_id + 1) % NUM_PHILOSOPHERS]);
+
+        sem_post(&room);
+    }
+
+    printf("Philosopher %d has finished eating.\n", phil_id);
+    return NULL;
+}
+
+int main() {
+    pthread_t philosophers[NUM_PHILOSOPHERS];
+
+    sem_init(&room, 0, NUM_PHILOSOPHERS - 1);
+    for (int i = 0; i < NUM_PHILOSOPHERS; i++) {
+        pthread_mutex_init(&chopstick[i], NULL);
+    }
+
+    for (int i = 0; i < NUM_PHILOSOPHERS; i++) {
+        int *id = malloc(sizeof(int));
+        *id = i;
+        pthread_create(&philosophers[i], NULL, philosopher, id);
+    }
+
+    for (int i = 0; i < NUM_PHILOSOPHERS; i++) {
+        pthread_join(philosophers[i], NULL);
+    }
+
+    for (int i = 0; i < NUM_PHILOSOPHERS; i++) {
+        pthread_mutex_destroy(&chopstick[i]);
+    }
+    sem_destroy(&room);
+
+    printf("\nAll philosophers have finished eating.\n");
+    return 0;
+}
+
+
+3.
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <semaphore.h>
+
+#define MAX_CUSTOMERS 5  // Number of waiting chairs
+#define NUM_CUSTOMERS 10  // Total customers
+
+sem_t barber_ready;
+sem_t customer_ready;
+pthread_mutex_t chair_access;
+int waiting_customers = 0;
+
+void *barber(void *arg) {
+    while (1) {
+        sem_wait(&customer_ready);
+        pthread_mutex_lock(&chair_access);
+
+        waiting_customers--;
+        printf("Barber is cutting hair. Waiting customers: %d\n", waiting_customers);
+
+        pthread_mutex_unlock(&chair_access);
+        sem_post(&barber_ready);
+
+        sleep(rand() % 3 + 1);
+        printf("Barber finished haircut.\n");
+    }
+    return NULL;
+}
+
+void *customer(void *id) {
+    int cust_id = *(int *)id;
+    free(id);
+
+    pthread_mutex_lock(&chair_access);
+    if (waiting_customers < MAX_CUSTOMERS) {
+        waiting_customers++;
+        printf("Customer %d is waiting. Waiting customers: %d\n", cust_id, waiting_customers);
+
+        sem_post(&customer_ready);
+        pthread_mutex_unlock(&chair_access);
+
+        sem_wait(&barber_ready);
+        printf("Customer %d is getting a haircut.\n", cust_id);
+
+    } else {
+        printf("Customer %d leaves (no chairs available).\n", cust_id);
+        pthread_mutex_unlock(&chair_access);
+    }
+
+    return NULL;
+}
+
+int main() {
+    pthread_t barber_thread, customer_threads[NUM_CUSTOMERS];
+
+    sem_init(&barber_ready, 0, 0);
+    sem_init(&customer_ready, 0, 0);
+    pthread_mutex_init(&chair_access, NULL);
+
+    pthread_create(&barber_thread, NULL, barber, NULL);
+
+    for (int i = 0; i < NUM_CUSTOMERS; i++) {
+        int *id = malloc(sizeof(int));
+        *id = i + 1;
+        pthread_create(&customer_threads[i], NULL, customer, id);
+        sleep(rand() % 2);
+    }
+
+    for (int i = 0; i < NUM_CUSTOMERS; i++) {
+        pthread_join(customer_threads[i], NULL);
+    }
+
+    pthread_cancel(barber_thread);
+
+    sem_destroy(&barber_ready);
+    sem_destroy(&customer_ready);
+    pthread_mutex_destroy(&chair_access);
+
+    printf("\nAll customers have been served or left.\n");
+    return 0;
+}
+
+
+4.
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <unistd.h>
+
+#define NUM_READERS 5  
+#define NUM_WRITERS 2  
+#define READS_PER_READER 5  
+#define WRITES_PER_WRITER 3 
+
+sem_t resource_access;
+sem_t read_count_access;
+sem_t service_queue;
+
+int read_count = 0;
+
+void* reader(void* id) {
+    int reader_id = *(int*)id;
+    free(id);
+
+    for (int i = 0; i < READS_PER_READER; i++) {
+        sem_wait(&service_queue);
+        sem_wait(&read_count_access);
+
+        read_count++;
+        if (read_count == 1) {
+            sem_wait(&resource_access);
+        }
+
+        sem_post(&service_queue);
+        sem_post(&read_count_access);
+
+        printf("Reader %d is reading the database. Readers active: %d\n", reader_id, read_count);
+        sleep(rand() % 3 + 1);
+
+        sem_wait(&read_count_access);
+        read_count--;
+        if (read_count == 0) {
+            sem_post(&resource_access);
+        }
+        sem_post(&read_count_access);
+
+        sleep(rand() % 4 + 1);
+    }
+    printf("Reader %d has finished all readings.\n", reader_id);
+    return NULL;
+}
+
+void* writer(void* id) {
+    int writer_id = *(int*)id;
+    free(id);
+
+    for (int i = 0; i < WRITES_PER_WRITER; i++) {
+        sem_wait(&service_queue);
+        sem_wait(&resource_access);
+        sem_post(&service_queue);
+
+        printf("Writer %d is writing to the database!\n", writer_id);
+        sleep(rand() % 3 + 2);
+        printf("Writer %d finished writing.\n", writer_id);
+
+        sem_post(&resource_access);
+        sleep(rand() % 5 + 2);
+    }
+    printf("Writer %d has finished all writings.\n", writer_id);
+    return NULL;
+}
+
+int main() {
+    pthread_t readers[NUM_READERS], writers[NUM_WRITERS];
+
+    sem_init(&resource_access, 0, 1);
+    sem_init(&read_count_access, 0, 1);
+    sem_init(&service_queue, 0, 1);
+
+    for (int i = 0; i < NUM_READERS; i++) {
+        int *id = malloc(sizeof(int));
+        *id = i + 1;
+        pthread_create(&readers[i], NULL, reader, id);
+    }
+
+    for (int i = 0; i < NUM_WRITERS; i++) {
+        int *id = malloc(sizeof(int));
+        *id = i + 1;
+        pthread_create(&writers[i], NULL, writer, id);
+    }
+
+    for (int i = 0; i < NUM_READERS; i++) {
+        pthread_join(readers[i], NULL);
+    }
+    for (int i = 0; i < NUM_WRITERS; i++) {
+        pthread_join(writers[i], NULL);
+    }
+
+    sem_destroy(&resource_access);
+    sem_destroy(&read_count_access);
+    sem_destroy(&service_queue);
+
+    printf("All readers and writers have completed execution.\n");
+    return 0;
+}
+
+
+
+5.
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <unistd.h>
+
+#define BUFFER_SIZE 5
+#define NUM_PRODUCERS 3
+#define NUM_CONSUMERS 3
+#define NUM_ITEMS 10  // Total items to produce/consume
+
+int buffer[BUFFER_SIZE];
+int in = 0, out = 0;
+int produced_count = 0, consumed_count = 0;
+
+sem_t empty_slots, full_slots;
+pthread_mutex_t mutex;
+
+void* producer(void* id) {
+    int producer_id = *(int*)id;
+    while (1) {
+        pthread_mutex_lock(&mutex);
+        if (produced_count >= NUM_ITEMS) {
+            pthread_mutex_unlock(&mutex);
+            break;
+        }
+        pthread_mutex_unlock(&mutex);
+
+        int item = rand() % 100;
+        sem_wait(&empty_slots);
+        pthread_mutex_lock(&mutex);
+
+        if (produced_count < NUM_ITEMS) {
+            buffer[in] = item;
+            printf("Producer %d: Produced item %d at index %d\n", producer_id, item, in);
+            in = (in + 1) % BUFFER_SIZE;
+            produced_count++;
+        }
+
+        pthread_mutex_unlock(&mutex);
+        sem_post(&full_slots);
+
+        sleep(rand() % 2);
+    }
+    return NULL;
+}
+
+void* consumer(void* id) {
+    int consumer_id = *(int*)id;
+    while (1) {
+        pthread_mutex_lock(&mutex);
+        if (consumed_count >= NUM_ITEMS) {
+            pthread_mutex_unlock(&mutex);
+            break;
+        }
+        pthread_mutex_unlock(&mutex);
+
+        sem_wait(&full_slots);
+        pthread_mutex_lock(&mutex);
+
+        if (consumed_count < NUM_ITEMS) {
+            int item = buffer[out];
+            printf("Consumer %d: Consumed item %d from index %d\n", consumer_id, item, out);
+            out = (out + 1) % BUFFER_SIZE;
+            consumed_count++;
+        }
+
+        pthread_mutex_unlock(&mutex);
+        sem_post(&empty_slots);
+
+        sleep(rand() % 3);
+    }
+    return NULL;
+}
+
+int main() {
+    pthread_t producers[NUM_PRODUCERS], consumers[NUM_CONSUMERS];
+    int producer_ids[NUM_PRODUCERS], consumer_ids[NUM_CONSUMERS];
+
+    sem_init(&empty_slots, 0, BUFFER_SIZE);
+    sem_init(&full_slots, 0, 0);
+    pthread_mutex_init(&mutex, NULL);
+
+    for (int i = 0; i < NUM_PRODUCERS; i++) {
+        producer_ids[i] = i + 1;
+        pthread_create(&producers[i], NULL, producer, &producer_ids[i]);
+    }
+
+    for (int i = 0; i < NUM_CONSUMERS; i++) {
+        consumer_ids[i] = i + 1;
+        pthread_create(&consumers[i], NULL, consumer, &consumer_ids[i]);
+    }
+
+    for (int i = 0; i < NUM_PRODUCERS; i++) {
+        pthread_join(producers[i], NULL);
+    }
+
+    for (int i = 0; i < NUM_CONSUMERS; i++) {
+        pthread_join(consumers[i], NULL);
+    }
+
+    sem_destroy(&empty_slots);
+    sem_destroy(&full_slots);
+    pthread_mutex_destroy(&mutex);
+
+    return 0;
+}
