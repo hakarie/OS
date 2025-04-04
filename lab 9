@@ -1,0 +1,285 @@
+1.
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+
+typedef struct {
+    double balance;
+    pthread_mutex_t mutex;
+} Account;
+
+void init_account(Account *account, double initial_balance) {
+    account->balance = initial_balance;
+    pthread_mutex_init(&account->mutex, NULL);
+}
+
+void deposit(Account *account, double amount) {
+    pthread_mutex_lock(&account->mutex);
+    account->balance += amount;
+    printf("Deposited: %.2f, New Balance: %.2f\n", amount, account->balance);
+    pthread_mutex_unlock(&account->mutex);
+}
+
+void withdraw(Account *account, double amount) {
+    pthread_mutex_lock(&account->mutex);
+    if (account->balance >= amount) {
+        account->balance -= amount;
+        printf("Withdrawn: %.2f, New Balance: %.2f\n", amount, account->balance);
+    } else {
+        printf("Insufficient funds to withdraw: %.2f\n", amount);
+    }
+    pthread_mutex_unlock(&account->mutex);
+}
+
+void *transaction(void *arg) {
+    Account *account = (Account *)arg;
+    for (int i = 0; i < 5; i++) {
+        if (rand() % 2 == 0) {
+            deposit(account, (double)(rand() % 100 + 1));
+        } else {
+            withdraw(account, (double)(rand() % 50 + 1));
+        }
+    }
+    pthread_exit(NULL);
+}
+
+int main() {
+    Account account;
+    init_account(&account, 1000.0);
+
+    printf("Initial Balance : 1000\n");
+
+    pthread_t threads[3];
+    for (int i = 0; i < 3; i++) {
+        pthread_create(&threads[i], NULL, transaction, (void *)&account);
+    }
+
+    for (int i = 0; i < 3; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    printf("Final Balance: %.2f\n", account.balance);
+    pthread_mutex_destroy(&account.mutex);
+    return 0;
+}
+
+
+2.
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+// Structure to represent a seat
+typedef struct {
+    int seatNumber;
+    int isReserved;
+} Seat;
+
+// Structure to represent the concert hall
+typedef struct {
+    Seat* seats;
+    int numSeats;
+    pthread_mutex_t mutex;
+} ConcertHall;
+
+// Function to initialize the concert hall
+ConcertHall* initConcertHall(int numSeats) {
+    ConcertHall* hall = (ConcertHall*)malloc(sizeof(ConcertHall));
+    hall->seats = (Seat*)malloc(numSeats * sizeof(Seat));
+    hall->numSeats = numSeats;
+    pthread_mutex_init(&hall->mutex, NULL);
+
+    for (int i = 0; i < numSeats; i++) {
+        hall->seats[i].seatNumber = i + 1;
+        hall->seats[i].isReserved = 0;
+    }
+
+    return hall;
+}
+
+// Function to reserve a seat
+void* reserveSeat(void* arg) {
+    ConcertHall* hall = (ConcertHall*)arg;
+    int seatNumber = rand() % hall->numSeats + 1;
+
+    pthread_mutex_lock(&hall->mutex);
+    for (int i = 0; i < hall->numSeats; i++) {
+        if (hall->seats[i].seatNumber == seatNumber && !hall->seats[i].isReserved) {
+            hall->seats[i].isReserved = 1;
+            printf("Seat %d reserved successfully.\n", seatNumber);
+            pthread_mutex_unlock(&hall->mutex);
+            return NULL;
+        }
+    }
+    printf("Seat %d is not available.\n", seatNumber);
+    pthread_mutex_unlock(&hall->mutex);
+    return NULL;
+}
+
+int main() {
+    int numSeats = 15;
+    ConcertHall* hall = initConcertHall(numSeats);
+
+    pthread_t threads[10];
+    srand(time(NULL)); // Seed the random number generator
+    for (int i = 0; i < 10; i++) { //changed from numSeats to 10.
+        pthread_create(&threads[i], NULL, reserveSeat, hall);
+    }
+
+    for (int i = 0; i < 10; i++) { //changed from numSeats to 10.
+        pthread_join(threads[i], NULL);
+    }
+
+    pthread_mutex_destroy(&hall->mutex);
+    free(hall->seats);
+    free(hall);
+
+    return 0;
+}
+
+
+3.
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <unistd.h> // for sleep
+
+#define NUM_ATMS 3
+#define NUM_CUSTOMERS 10
+
+sem_t atm_semaphore;
+
+void* customer(void* arg) {
+    int customer_id = *(int*)arg;
+    printf("Customer %d arriving...\n", customer_id);
+
+    sem_wait(&atm_semaphore); // Wait for an available ATM
+
+    printf("Customer %d using ATM...\n", customer_id);
+    sleep(rand() % 3 + 1); // Simulate ATM usage time
+
+    printf("Customer %d finished using ATM.\n", customer_id);
+    sem_post(&atm_semaphore); // Release the ATM
+
+    pthread_exit(NULL);
+}
+
+int main() {
+    pthread_t customers[NUM_CUSTOMERS];
+    int customer_ids[NUM_CUSTOMERS];
+
+    sem_init(&atm_semaphore, 0, NUM_ATMS); // Initialize semaphore with NUM_ATMS permits
+
+    for (int i = 0; i < NUM_CUSTOMERS; i++) {
+        customer_ids[i] = i;
+        pthread_create(&customers[i], NULL, customer, &customer_ids[i]);
+    }
+
+    for (int i = 0; i < NUM_CUSTOMERS; i++) {
+        pthread_join(customers[i], NULL);
+    }
+
+    sem_destroy(&atm_semaphore);
+    return 0;
+}
+
+
+
+4.
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+// Structure to represent the warehouse
+typedef struct {
+    int capacity;
+    int currentStock;
+    sem_t emptySlots;
+    sem_t filledSlots;
+    pthread_mutex_t mutex;
+    int maxOperations; // New field to track max operations
+    int currentOperations; // New field to track current operations
+} Warehouse;
+
+// Function to initialize the warehouse
+Warehouse* initWarehouse(int capacity, int maxOperations) {
+    Warehouse* warehouse = (Warehouse*) malloc(sizeof(Warehouse));
+    warehouse->capacity = capacity;
+    warehouse->currentStock = 0;
+    sem_init(&warehouse->emptySlots, 0, capacity);
+    sem_init(&warehouse->filledSlots, 0, 0);
+    pthread_mutex_init(&warehouse->mutex, NULL);
+    warehouse->maxOperations = maxOperations;
+    warehouse->currentOperations = 0;
+    return warehouse;
+}
+
+// Function to add stock to the warehouse (supplier)
+void* supplier(void* arg) {
+    Warehouse* warehouse = (Warehouse*) arg;
+    int stockToAdd = 1;
+
+    while (warehouse->currentOperations < warehouse->maxOperations) {
+        sem_wait(&warehouse->emptySlots);
+        pthread_mutex_lock(&warehouse->mutex);
+        warehouse->currentStock += stockToAdd;
+        printf("Supplier added %d unit(s) of stock. Current stock: %d\n", stockToAdd, warehouse->currentStock);
+        pthread_mutex_unlock(&warehouse->mutex);
+        sem_post(&warehouse->filledSlots);
+        warehouse->currentOperations++;
+
+        // Simulate supplier delay
+        sleep(1);
+    }
+
+    return NULL;
+}
+
+// Function to remove stock from the warehouse (retailer)
+void* retailer(void* arg) {
+    Warehouse* warehouse = (Warehouse*) arg;
+    int stockToRemove = 1;
+
+    while (warehouse->currentOperations < warehouse->maxOperations) {
+        sem_wait(&warehouse->filledSlots);
+        pthread_mutex_lock(&warehouse->mutex);
+        if (warehouse->currentStock >= stockToRemove) {
+            warehouse->currentStock -= stockToRemove;
+            printf("Retailer removed %d unit(s) of stock. Current stock: %d\n", stockToRemove, warehouse->currentStock);
+        } else {
+            printf("Insufficient stock for retailer.\n");
+        }
+        pthread_mutex_unlock(&warehouse->mutex);
+        sem_post(&warehouse->emptySlots);
+        warehouse->currentOperations++;
+
+        // Simulate retailer delay
+        sleep(2);
+    }
+
+    return NULL;
+}
+
+int main() {
+    int capacity = 5;
+    int maxOperations = 10;
+    Warehouse* warehouse = initWarehouse(capacity, maxOperations);
+
+    pthread_t supplierThread, retailerThread;
+    pthread_create(&supplierThread, NULL, supplier, warehouse);
+    pthread_create(&retailerThread, NULL, retailer, warehouse);
+
+    pthread_join(supplierThread, NULL);
+    pthread_join(retailerThread, NULL);
+
+    sem_destroy(&warehouse->emptySlots);
+    sem_destroy(&warehouse->filledSlots);
+    pthread_mutex_destroy(&warehouse->mutex);
+    free(warehouse);
+
+    return 0;
+}
